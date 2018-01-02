@@ -5,7 +5,7 @@ import { Subject } from 'rxjs/Subject';
 import { Observable } from 'rxjs/Observable';
 import { BehaviorSubject } from 'rxjs/BehaviorSubject';
 
-import { CognitoUserPool, CognitoUserAttribute, CognitoUser } from 'amazon-cognito-identity-js';
+import { CognitoUserPool, CognitoUserAttribute, CognitoUser, AuthenticationDetails } from 'amazon-cognito-identity-js';
 
 import { User } from './user.model';
 
@@ -22,7 +22,9 @@ export class AuthService {
   authIsLoading = new BehaviorSubject<boolean>(false);
   authDidFail = new BehaviorSubject<boolean>(false);
   authStatusChanged = new Subject<boolean>();
+
   constructor(private router: Router) {}
+
   signUp(username: string, email: string, password: string): void {
     this.authIsLoading.next(true);
     const user: User = {
@@ -51,6 +53,7 @@ export class AuthService {
 
     return;
   }
+
   confirmUser(username: string, code: string) {
     this.authIsLoading.next(true);
     const userData = {
@@ -70,32 +73,75 @@ export class AuthService {
       this.router.navigate(['/']);
     });
   }
+
   signIn(username: string, password: string): void {
     this.authIsLoading.next(true);
     const authData = {
       Username: username,
       Password: password
     };
-    this.authStatusChanged.next(true);
+
+    const userData = {
+      Username: username,
+      Pool: userPool
+    };
+
+    const authDetails = new AuthenticationDetails(authData);
+
+    const that = this; // for passing 'this' to lambda
+    const cognitoUser = new CognitoUser(userData);
+    cognitoUser.authenticateUser(authDetails, {
+      onSuccess(result) {
+        that.authStatusChanged.next(true);
+        that.authDidFail.next(false);
+        that.authIsLoading.next(false);
+        console.log(result);
+      },
+      onFailure(err) {
+        that.authDidFail.next(true);
+        that.authIsLoading.next(false);
+        console.log(err);
+      }
+    });
+
     return;
   }
+
   getAuthenticatedUser() {
+    return userPool.getCurrentUser();
   }
+
   logout() {
+    this.getAuthenticatedUser().signOut();
     this.authStatusChanged.next(false);
   }
+
   isAuthenticated(): Observable<boolean> {
     const user = this.getAuthenticatedUser();
+
     const obs = Observable.create((observer) => {
       if (!user) {
         observer.next(false);
       } else {
-        observer.next(false);
+        user.getSession((err, session) => {
+          if (err) {
+            observer.next(false);
+            return;
+          }
+
+          if (session.isValid()) {
+            observer.next(true);
+          } else {
+            observer.next(false);
+          }
+        });
       }
       observer.complete();
     });
+
     return obs;
   }
+
   initAuth() {
     this.isAuthenticated().subscribe(
       (auth) => this.authStatusChanged.next(auth)
